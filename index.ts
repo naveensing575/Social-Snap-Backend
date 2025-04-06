@@ -1,7 +1,8 @@
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import youtubedl from "youtube-dl-exec";
 import { URL } from "url";
+import axios from "axios";
 
 const app = express();
 const PORT = 5000;
@@ -48,7 +49,11 @@ function extractCleanYouTubeURL(inputUrl: string): string | null {
   }
 }
 
-const handleDownload = async (req: Request, res: Response): Promise<void> => {
+const handleDownload = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   let { url } = req.body;
 
   if (!url || typeof url !== "string") {
@@ -85,7 +90,9 @@ const handleDownload = async (req: Request, res: Response): Promise<void> => {
     res.json({
       title: result.title,
       thumbnail: result.thumbnail,
-      downloadUrl: bestFormat?.url ?? result.url,
+      downloadUrl: `/api/stream?videoUrl=${encodeURIComponent(
+        bestFormat?.url ?? result.url
+      )}&title=${encodeURIComponent(result.title)}`,
     });
   } catch (error) {
     console.error("Error fetching download link:", error);
@@ -94,6 +101,32 @@ const handleDownload = async (req: Request, res: Response): Promise<void> => {
 };
 
 app.post("/api/download", handleDownload);
+
+app.get("/api/stream", (req: Request, res: Response): void => {
+  const videoUrl = req.query.videoUrl as string;
+  const title = (req.query.title as string) || "video";
+
+  if (!videoUrl) {
+    res.status(400).json({ error: "Missing videoUrl parameter" });
+    return;
+  }
+
+  axios
+    .get(videoUrl, { responseType: "stream" })
+    .then((response) => {
+      const safeTitle = title.replace(/[^a-zA-Z0-9-_\.]/g, "_");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename=${safeTitle}.mp4`
+      );
+      res.setHeader("Content-Type", "video/mp4");
+      response.data.pipe(res);
+    })
+    .catch((err) => {
+      console.error("Error streaming video:", err);
+      res.status(500).json({ error: "Unable to stream video." });
+    });
+});
 
 app.listen(PORT, () => {
   console.log(`🚀 Server is running at http://localhost:${PORT}`);
